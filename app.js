@@ -11,6 +11,7 @@ window.LOCAL_VIDEO_PLAY_CONFIG = { fit: 'contain' };
 
 const AI_DENOISER_VERSION = '2.0.2';
 const AI_DENOISER_ASSETS_PATH = `https://cdn.jsdelivr.net/npm/agora-extension-ai-denoiser@${AI_DENOISER_VERSION}/external`;
+const AI_DENOISER_LOG_LEVEL = Object.freeze({ DEBUG: 0, NONE: 4 });
 console.info(`[AINS] agora-extension-ai-denoiser version: ${AI_DENOISER_VERSION}`);
 
 let client;
@@ -24,6 +25,7 @@ let isDualStreamEnabled = false;
 let isVirtualBackgroundEnabled = false;
 let isAinsEnabled = false;
 let ainsMode = 'NSNG';
+let ainsLevel = 'AGGRESSIVE';
 let ainsExtension;
 let ainsProcessor;
 let startTime;
@@ -156,6 +158,7 @@ let fpsData;
 
 // Add new DOM elements
 const audioProfileSelect = document.getElementById('audioProfile');
+const ainsLevelSelect = document.getElementById('ainsLevel');
 const svcControls = document.getElementById('svcControls');
 const spatialLayerInput = document.getElementById('spatialLayer');
 const temporalLayerInput = document.getElementById('temporalLayer');
@@ -1336,9 +1339,24 @@ async function restoreAudioDumpCapture() {
     }
 }
 
+function setAinsLogLevel(level) {
+    const numericLevel = AI_DENOISER_LOG_LEVEL[level];
+    const extensionClass = window.AIDenoiser?.AIDenoiserExtension;
+    if (numericLevel === undefined || typeof extensionClass?.setLogLevel !== 'function') {
+        console.warn(`[AINS] unable to set log level: ${level}`);
+        return;
+    }
+
+    extensionClass.setLogLevel(numericLevel);
+    console.info(`[AINS] log level: ${level} (${numericLevel})`);
+}
+
 async function detachAinsProcessor() {
     const processor = ainsProcessor;
-    if (!processor) return;
+    if (!processor) {
+        setAinsLogLevel('NONE');
+        return;
+    }
 
     let cleanupError;
     try {
@@ -1362,7 +1380,11 @@ async function detachAinsProcessor() {
     }
 
     if (ainsProcessor === processor) ainsProcessor = null;
-    if (audioDumpState.active) await finalizeAudioDump();
+    try {
+        if (audioDumpState.active) await finalizeAudioDump();
+    } finally {
+        setAinsLogLevel('NONE');
+    }
     if (cleanupError) throw cleanupError;
 }
 
@@ -1404,6 +1426,7 @@ function buildAudioDumpManifest() {
         agoraRtcSdkVersion: AgoraRTC.VERSION || null,
         aiDenoiserVersion: AI_DENOISER_VERSION,
         aiDenoiserMode: ainsMode,
+        aiDenoiserLevel: ainsLevel,
         page: `${window.location.origin}${window.location.pathname}`,
         userAgent: navigator.userAgent,
         crossOriginIsolated: window.crossOriginIsolated,
@@ -1557,6 +1580,32 @@ function getAinsExtension() {
     return ainsExtension;
 }
 
+async function changeAinsLevel() {
+    const selectedLevel = ainsLevelSelect?.value;
+    if (selectedLevel !== 'SOFT' && selectedLevel !== 'AGGRESSIVE') return;
+
+    if (!isAinsEnabled || !ainsProcessor) {
+        ainsLevel = selectedLevel;
+        console.info(`[AINS] processor level selected: ${ainsLevel}`);
+        return;
+    }
+
+    const previousLevel = ainsLevel;
+    ainsLevelSelect.disabled = true;
+    try {
+        await ainsProcessor.setLevel(selectedLevel);
+        ainsLevel = selectedLevel;
+        console.info(`[AINS] processor level: ${ainsLevel}`);
+        showPopup(`AINS level changed to ${ainsLevel}`);
+    } catch (error) {
+        ainsLevelSelect.value = previousLevel;
+        console.error('Failed to change AINS level:', error);
+        showPopup('Failed to change AINS level');
+    } finally {
+        ainsLevelSelect.disabled = false;
+    }
+}
+
 // Toggle AINS
 async function toggleAins() {
     if (!localAudioTrack) {
@@ -1569,6 +1618,7 @@ async function toggleAins() {
         if (!isAinsEnabled) {
             console.log("Enabling AINS...");
             showPopup("Enabling AINS...");
+            setAinsLogLevel('DEBUG');
             
             // The extension is registered once and reused to create processors.
             const denoiser = getAinsExtension();
@@ -1605,11 +1655,13 @@ async function toggleAins() {
             // Enable and configure
             try {
                 await processor.enable();
-                await processor.setLevel("AGGRESSIVE");
+                await processor.setLevel(ainsLevelSelect.value);
+                ainsLevel = ainsLevelSelect.value;
                 ainsMode = 'NSNG';
                 isAinsEnabled = true;
                 ainsBtn.textContent = "Disable AINS";
                 updateAudioDumpControls();
+                console.info(`[AINS] processor level: ${ainsLevel}`);
                 showPopup("AINS enabled successfully");
             } catch (error) {
                 console.error("enable AIDenoiser failure");
@@ -1631,6 +1683,7 @@ async function toggleAins() {
         }
     } catch (error) {
         console.error("Error toggling AINS:", error);
+        if (!isAinsEnabled) setAinsLogLevel('NONE');
         showPopup("Error toggling AINS");
     }
 }
@@ -1823,6 +1876,8 @@ function toggleSettings() {
 
 // Initialize everything after DOM is loaded
 document.addEventListener('DOMContentLoaded', () => {
+        setAinsLogLevel('NONE');
+
         // Add GitHub link
         const githubLink = document.createElement('a');
         githubLink.href = 'https://github.com/frank005/catProxy';
@@ -1883,6 +1938,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (virtualBgBtn) virtualBgBtn.addEventListener('click', toggleVirtualBackground);
     if (ainsBtn) ainsBtn.addEventListener('click', toggleAins);
     if (audioDumpBtn) audioDumpBtn.addEventListener('click', startAudioDump);
+    if (ainsLevelSelect) ainsLevelSelect.addEventListener('change', changeAinsLevel);
     if (downloadAudioDumpBtn) {
         downloadAudioDumpBtn.addEventListener('click', () => {
             if (audioDumpState.archiveBlob && audioDumpState.archiveName) {

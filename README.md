@@ -58,7 +58,7 @@ cd catProxy
 4. **Additional Features**
    - Toggle microphone/camera
    - Enable/disable virtual background
-   - Toggle AI noise suppression
+   - Select `SOFT` or `AGGRESSIVE` AINS level and toggle AI noise suppression
    - Collect an AINS audio dump
    - Enable/disable dual stream
    - Switch between streams
@@ -79,6 +79,8 @@ cd catProxy
 The archive contains up to nine PCM files covering three AINS processing stages (`input`, `ns_out`, and `agc_out`) plus `manifest.json` with browser, SDK, channel, microphone, and audio-profile context. According to the [Agora AINS Web documentation](https://docs.agora.io/en/realtime-media/marketplace/build/add-audio-effects/ains/web#dump-audio-data), the dump includes up to 30 seconds before the button click and 60 seconds after it. Disabling AINS or leaving early ends the dump and can produce fewer files.
 
 Share the complete ZIP when escalating an AINS issue. PCM files are raw audio and may contain customer conversations, so obtain consent and handle them as sensitive data.
+
+The AINS extension automatically switches to `DEBUG` logging when AINS is enabled and to `NONE` when AINS is disabled. Changing **AINS Level** while AINS is running applies the new level immediately.
 
 ## Deploy with GitHub Pages
 
