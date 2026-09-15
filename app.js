@@ -9,6 +9,10 @@ if (typeof AgoraRTC !== 'undefined' && typeof AgoraRTC.setLogLevel === 'function
 // Agora client configuration
 window.LOCAL_VIDEO_PLAY_CONFIG = { fit: 'contain' };
 
+const AI_DENOISER_VERSION = '2.0.2';
+const AI_DENOISER_ASSETS_PATH = `https://cdn.jsdelivr.net/npm/agora-extension-ai-denoiser@${AI_DENOISER_VERSION}/external`;
+console.info(`[AINS] agora-extension-ai-denoiser version: ${AI_DENOISER_VERSION}`);
+
 let client;
 let client2;
 let localAudioTrack;
@@ -18,8 +22,21 @@ let remoteVideoTrack;
 let isDualStreamEnabled = false;
 let isVirtualBackgroundEnabled = false;
 let isAinsEnabled = false;
+let ainsExtension;
+let ainsProcessor;
 let startTime;
 let statsInterval;
+
+const AUDIO_DUMP_EXPECTED_FILES = 9;
+const audioDumpState = {
+    active: false,
+    files: [],
+    startedAt: null,
+    statusTimer: null,
+    archiveBlob: null,
+    archiveName: null,
+    finalizing: false
+};
 
 //Agora net-quality stats
 var clientNetQuality = {uplink: 0, downlink: 0};
@@ -89,6 +106,14 @@ const dualStreamBtn = document.getElementById('dualStreamBtn');
 const switchStreamBtn = document.getElementById('switchStreamBtn');
 const virtualBgBtn = document.getElementById('virtualBgBtn');
 const ainsBtn = document.getElementById('ainsBtn');
+const audioDumpBtn = document.getElementById('audioDumpBtn');
+const audioDumpPanel = document.getElementById('audioDumpPanel');
+const audioDumpMessage = document.getElementById('audioDumpMessage');
+const audioDumpStatus = document.getElementById('audioDumpStatus');
+const audioDumpProgress = document.getElementById('audioDumpProgress');
+const audioDumpProgressBar = audioDumpPanel?.querySelector('[role="progressbar"]');
+const audioDumpFileCount = document.getElementById('audioDumpFileCount');
+const downloadAudioDumpBtn = document.getElementById('downloadAudioDumpBtn');
 const beautyBtn = document.getElementById('beautyBtn');
 const watermarkBtn = document.getElementById('watermarkBtn');
 const localVideo = document.getElementById('localVideo');
@@ -446,6 +471,11 @@ async function getDevices() {
 // Create local tracks
 async function createLocalTracks() {
     try {
+        const selectedAudioProfile = audioProfileSelect.value;
+        const audioProfile = selectedAudioProfile.startsWith('{')
+            ? JSON.parse(selectedAudioProfile)
+            : selectedAudioProfile;
+
         // Create audio track with selected profile
         /*const audioProfile = audioProfileSelect.value;
         localVideoTrack = await AgoraRTC.createCameraVideoTrack({
@@ -644,10 +674,10 @@ async function leaveChannel() {
                 showPopup("Error removing virtual background processor");
             }
         }
-        if (localAudioTrack && isAinsEnabled) {
+        if (localAudioTrack && ainsProcessor) {
             showPopup("Removing AINS processor...");
             try {
-                await localAudioTrack.unpipe();
+                await detachAinsProcessor();
                 showPopup("AINS processor removed");
             } catch (error) {
                 console.error("Error removing AINS processor:", error);
@@ -725,6 +755,7 @@ async function leaveChannel() {
         virtualBgBtn.textContent = "Enable Virtual Background";
         dualStreamBtn.textContent = "Enable Dual Stream";
         ainsBtn.textContent = "Enable AINS";
+        updateAudioDumpControls();
         window.isBeautyEnabled = false;
         if (beautyBtn) beautyBtn.textContent = "Enable Beauty";
         const beautyControlsEl = document.getElementById('beautyControls');
@@ -1206,6 +1237,248 @@ async function toggleVirtualBackground() {
     }
 }
 
+function sanitizeDownloadName(name) {
+    return String(name || 'audio_dump.pcm')
+        .split(/[\\/]/)
+        .pop()
+        .replace(/[^a-zA-Z0-9._-]/g, '_');
+}
+
+function formatBytes(bytes) {
+    if (bytes < 1024) return `${bytes} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function setAudioDumpStatus(state, label, message) {
+    if (audioDumpStatus) {
+        audioDumpStatus.dataset.state = state;
+        audioDumpStatus.textContent = label;
+    }
+    if (audioDumpMessage) audioDumpMessage.textContent = message;
+}
+
+function updateAudioDumpProgress() {
+    const fileCount = audioDumpState.files.length;
+    const progress = Math.min(fileCount / AUDIO_DUMP_EXPECTED_FILES, 1) * 100;
+    const totalSize = audioDumpState.files.reduce((sum, file) => sum + file.blob.size, 0);
+
+    if (audioDumpProgress) audioDumpProgress.style.width = `${progress}%`;
+    if (audioDumpProgressBar) audioDumpProgressBar.setAttribute('aria-valuenow', String(fileCount));
+    if (audioDumpFileCount) {
+        audioDumpFileCount.textContent = `${fileCount} of up to ${AUDIO_DUMP_EXPECTED_FILES} PCM files${totalSize ? `, ${formatBytes(totalSize)}` : ''}`;
+    }
+}
+
+function updateAudioDumpControls() {
+    if (!audioDumpBtn) return;
+
+    audioDumpBtn.disabled = !isAinsEnabled || audioDumpState.active || audioDumpState.finalizing;
+    audioDumpBtn.textContent = audioDumpState.active
+        ? `Collecting ${audioDumpState.files.length}/${AUDIO_DUMP_EXPECTED_FILES}`
+        : audioDumpState.finalizing ? 'Creating ZIP...' : 'Dump Audio Data';
+
+    if (
+        !audioDumpState.active
+        && !audioDumpState.finalizing
+        && !audioDumpState.archiveBlob
+        && audioDumpStatus?.dataset.state !== 'error'
+    ) {
+        setAudioDumpStatus(
+            'idle',
+            isAinsEnabled ? 'Ready' : 'Unavailable',
+            isAinsEnabled
+                ? 'Captures the previous 30 seconds and the next 60 seconds.'
+                : 'Enable AINS to collect diagnostic audio.'
+        );
+    }
+}
+
+async function detachAinsProcessor() {
+    const processor = ainsProcessor;
+    if (!processor) return;
+
+    let cleanupError;
+    try {
+        if (processor.enabled) await processor.disable();
+    } catch (error) {
+        cleanupError = error;
+    }
+    try {
+        if (localAudioTrack) await localAudioTrack.unpipe();
+    } catch (error) {
+        cleanupError ||= error;
+    }
+    try {
+        if (typeof processor.destroy === 'function') {
+            await processor.destroy();
+        } else if (typeof processor.release === 'function') {
+            await processor.release();
+        }
+    } catch (error) {
+        cleanupError ||= error;
+    }
+
+    if (ainsProcessor === processor) ainsProcessor = null;
+    if (audioDumpState.active) await finalizeAudioDump();
+    if (cleanupError) throw cleanupError;
+}
+
+function downloadBlob(blob, filename) {
+    const objectUrl = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = objectUrl;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    setTimeout(() => URL.revokeObjectURL(objectUrl), 1000);
+}
+
+function handleAudioDumpFile(blob, name) {
+    if (!audioDumpState.active || !(blob instanceof Blob)) return;
+
+    audioDumpState.files.push({
+        blob,
+        name: sanitizeDownloadName(name)
+    });
+    updateAudioDumpProgress();
+    updateAudioDumpControls();
+}
+
+function buildAudioDumpManifest() {
+    return {
+        createdAt: new Date().toISOString(),
+        dumpStartedAt: audioDumpState.startedAt?.toISOString(),
+        channel: channelNameInput.value,
+        uid: client?.uid ?? null,
+        audioProfile: audioProfileSelect.value,
+        microphone: micSelect.options[micSelect.selectedIndex]?.text || null,
+        agoraRtcSdkVersion: AgoraRTC.VERSION || null,
+        aiDenoiserVersion: AI_DENOISER_VERSION,
+        page: `${window.location.origin}${window.location.pathname}`,
+        userAgent: navigator.userAgent,
+        crossOriginIsolated: window.crossOriginIsolated,
+        files: audioDumpState.files.map(file => ({
+            name: file.name,
+            size: file.blob.size,
+            type: file.blob.type || 'application/octet-stream'
+        }))
+    };
+}
+
+async function finalizeAudioDump() {
+    if (!audioDumpState.active || audioDumpState.finalizing) return;
+
+    audioDumpState.active = false;
+    audioDumpState.finalizing = true;
+    clearInterval(audioDumpState.statusTimer);
+    audioDumpState.statusTimer = null;
+    updateAudioDumpControls();
+
+    if (!audioDumpState.files.length) {
+        audioDumpState.finalizing = false;
+        setAudioDumpStatus('error', 'No data', 'AINS returned no audio files. Keep the microphone unmuted and try again.');
+        updateAudioDumpControls();
+        return;
+    }
+
+    if (typeof JSZip === 'undefined') {
+        audioDumpState.finalizing = false;
+        setAudioDumpStatus('error', 'ZIP unavailable', 'Could not load the ZIP library. Refresh the page and try again.');
+        updateAudioDumpControls();
+        return;
+    }
+
+    try {
+        const zip = new JSZip();
+        audioDumpState.files.forEach(file => zip.file(file.name, file.blob));
+        zip.file('manifest.json', JSON.stringify(buildAudioDumpManifest(), null, 2));
+
+        audioDumpState.archiveBlob = await zip.generateAsync({
+            type: 'blob',
+            compression: 'DEFLATE',
+            compressionOptions: { level: 6 }
+        });
+        const timestamp = audioDumpState.startedAt.toISOString().replace(/[:.]/g, '-');
+        audioDumpState.archiveName = `ains-audio-dump-${timestamp}.zip`;
+        audioDumpState.finalizing = false;
+
+        downloadBlob(audioDumpState.archiveBlob, audioDumpState.archiveName);
+        setAudioDumpStatus('ready', 'Downloaded', `${audioDumpState.files.length} PCM files packaged with diagnostic metadata.`);
+        if (downloadAudioDumpBtn) downloadAudioDumpBtn.hidden = false;
+        showPopup(`AINS audio dump ready: ${audioDumpState.archiveName}`);
+    } catch (error) {
+        console.error('Failed to create AINS audio dump ZIP:', error);
+        audioDumpState.finalizing = false;
+        setAudioDumpStatus('error', 'ZIP failed', `Could not create the archive: ${error.message}`);
+    }
+
+    updateAudioDumpControls();
+}
+
+async function startAudioDump() {
+    if (!isAinsEnabled || !ainsProcessor || typeof ainsProcessor.dump !== 'function') {
+        showPopup('Enable AINS before starting an audio dump');
+        return;
+    }
+    if (audioDumpState.active || audioDumpState.finalizing) return;
+
+    audioDumpState.active = true;
+    audioDumpState.files = [];
+    audioDumpState.startedAt = new Date();
+    audioDumpState.archiveBlob = null;
+    audioDumpState.archiveName = null;
+    if (downloadAudioDumpBtn) downloadAudioDumpBtn.hidden = true;
+    updateAudioDumpProgress();
+    setAudioDumpStatus('collecting', 'Collecting', 'Keep the call running for about 60 seconds.');
+    updateAudioDumpControls();
+
+    audioDumpState.statusTimer = setInterval(() => {
+        const elapsedSeconds = Math.floor((Date.now() - audioDumpState.startedAt.getTime()) / 1000);
+        if (audioDumpMessage) {
+            audioDumpMessage.textContent = elapsedSeconds < 60
+                ? `Collecting post-trigger audio: ${elapsedSeconds}s of about 60s.`
+                : 'Finalizing the audio files...';
+        }
+    }, 1000);
+
+    try {
+        await ainsProcessor.dump();
+        showPopup('AINS audio dump started');
+    } catch (error) {
+        console.error('Failed to start AINS audio dump:', error);
+        audioDumpState.active = false;
+        clearInterval(audioDumpState.statusTimer);
+        audioDumpState.statusTimer = null;
+        setAudioDumpStatus('error', 'Failed', error.message || 'Could not start the audio dump.');
+        updateAudioDumpControls();
+    }
+}
+
+function getAinsExtension() {
+    if (ainsExtension) return ainsExtension;
+    if (!window.AIDenoiser?.AIDenoiserExtension) {
+        throw new Error('agora-extension-ai-denoiser failed to load');
+    }
+
+    const extension = new AIDenoiser.AIDenoiserExtension({
+        assetsPath: AI_DENOISER_ASSETS_PATH
+    });
+    if (!extension.checkCompatibility()) {
+        throw new Error('This browser does not support Agora AI Denoiser');
+    }
+
+    AgoraRTC.registerExtensions([extension]);
+    ainsExtension = extension;
+    console.info('[AINS] plugin registered', {
+        version: AI_DENOISER_VERSION,
+        assetsPath: AI_DENOISER_ASSETS_PATH,
+        agoraRtcSdkVersion: AgoraRTC.VERSION || 'unknown'
+    });
+    return ainsExtension;
+}
+
 // Toggle AINS
 async function toggleAins() {
     if (!localAudioTrack) {
@@ -1219,34 +1492,43 @@ async function toggleAins() {
             console.log("Enabling AINS...");
             showPopup("Enabling AINS...");
             
-            // Create and register AINS extension
-            const denoiser = new AIDenoiser.AIDenoiserExtension({
-                assetsPath: 'https://agora-packages.s3.us-west-2.amazonaws.com/ext/aidenoiser/external'
-            });
-            AgoraRTC.registerExtensions([denoiser]);
-            
-            denoiser.onloaderror = (e) => {
-                console.error(e);
-                showPopup("AINS load error");
-            };
+            // The extension is registered once and reused to create processors.
+            const denoiser = getAinsExtension();
 
             // Create processor
             const processor = denoiser.createProcessor();
+            ainsProcessor = processor;
             
             // Set up event handlers
-            processor.onoverload = async (elapsedTimeInMs) => {
-                console.log(`"overload!!! elapsed: ${elapsedTimeInMs}`);
-                showPopup(`AINS overload after ${elapsedTimeInMs}ms`);
+            processor.on('dump', handleAudioDumpFile);
+            processor.on('dumpend', () => {
+                finalizeAudioDump();
+            });
+            processor.on('pipeerror', (error) => {
+                console.error('AINS pipe error:', error);
+                showPopup('AINS processor failed to load');
+            });
+            processor.on('overload', async (elapsedTimeInMs) => {
+                const elapsedDetail = Number.isFinite(elapsedTimeInMs) ? ` after ${elapsedTimeInMs}ms` : '';
+                console.warn(`[AINS] processor overload${elapsedDetail}`);
+                showPopup(`AINS overload${elapsedDetail}`);
                 try {
                     await processor.disable();
                     isAinsEnabled = false;
                     ainsBtn.textContent = "Enable AINS";
+                    updateAudioDumpControls();
                     showPopup("AINS disabled due to overload");
                 } catch (error) {
                     console.error("disable AIDenoiser failure");
                     showPopup("Failed to disable AINS after overload");
+                } finally {
+                    try {
+                        await detachAinsProcessor();
+                    } catch (error) {
+                        console.error('Failed to remove overloaded AINS processor:', error);
+                    }
                 }
-            };
+            });
 
             // Pipe the processor
             await localAudioTrack.pipe(processor).pipe(localAudioTrack.processorDestination);
@@ -1257,17 +1539,24 @@ async function toggleAins() {
                 await processor.setLevel("AGGRESSIVE");
                 isAinsEnabled = true;
                 ainsBtn.textContent = "Disable AINS";
+                updateAudioDumpControls();
                 showPopup("AINS enabled successfully");
             } catch (error) {
                 console.error("enable AIDenoiser failure");
                 showPopup("Failed to enable AINS");
+                try {
+                    await detachAinsProcessor();
+                } catch (cleanupError) {
+                    console.error('Failed to clean up AINS processor:', cleanupError);
+                }
             }
         } else {
             console.log("Disabling AINS...");
             showPopup("Disabling AINS...");
-            await localAudioTrack.unpipe();
+            await detachAinsProcessor();
             isAinsEnabled = false;
             ainsBtn.textContent = "Enable AINS";
+            updateAudioDumpControls();
             showPopup("AINS disabled successfully");
         }
     } catch (error) {
@@ -1523,6 +1812,14 @@ document.addEventListener('DOMContentLoaded', () => {
     if (switchStreamBtn) switchStreamBtn.addEventListener('click', switchStream);
     if (virtualBgBtn) virtualBgBtn.addEventListener('click', toggleVirtualBackground);
     if (ainsBtn) ainsBtn.addEventListener('click', toggleAins);
+    if (audioDumpBtn) audioDumpBtn.addEventListener('click', startAudioDump);
+    if (downloadAudioDumpBtn) {
+        downloadAudioDumpBtn.addEventListener('click', () => {
+            if (audioDumpState.archiveBlob && audioDumpState.archiveName) {
+                downloadBlob(audioDumpState.archiveBlob, audioDumpState.archiveName);
+            }
+        });
+    }
     if (watermarkBtn) {
         watermarkBtn.addEventListener('click', async () => {
             if (window.toggleWatermark) {
@@ -1545,6 +1842,7 @@ document.addEventListener('DOMContentLoaded', () => {
         btn.disabled = true;
         btn.style.opacity = '0.5';
     });
+    updateAudioDumpControls();
     if (watermarkBtn) {
         watermarkBtn.disabled = false;
         watermarkBtn.style.opacity = '1';
@@ -1781,4 +2079,4 @@ async function updateSVCLayers() {
 // Add toggle for SVC controls
 function toggleSVCControls() {
     svcControls.style.display = svcControls.style.display === 'none' ? 'block' : 'none';
-} 
+}

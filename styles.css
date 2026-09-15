@@ -282,6 +282,83 @@ header {
     text-overflow: ellipsis;
 }
 
+.audio-dump-panel {
+    margin: 0 0 20px;
+    padding: 14px 16px;
+    border: 1px solid #d8dde3;
+    border-left: 4px solid #4a90e2;
+    border-radius: 6px;
+    background: #fff;
+}
+
+.audio-dump-summary,
+.audio-dump-footer {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+}
+
+.audio-dump-summary h2 {
+    font-size: 16px;
+    line-height: 1.3;
+    color: #2c3e50;
+}
+
+.audio-dump-summary p,
+.audio-dump-footer {
+    color: #5f6b76;
+    font-size: 13px;
+}
+
+.audio-dump-status {
+    flex: 0 0 auto;
+    padding: 3px 9px;
+    border-radius: 999px;
+    background: #e9ecef;
+    color: #4c5660;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.audio-dump-status[data-state="collecting"] {
+    background: #fff3cd;
+    color: #7a5900;
+}
+
+.audio-dump-status[data-state="ready"] {
+    background: #d8f3e3;
+    color: #146c43;
+}
+
+.audio-dump-status[data-state="error"] {
+    background: #f8d7da;
+    color: #842029;
+}
+
+.audio-dump-progress {
+    height: 6px;
+    margin: 12px 0 9px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: #e9ecef;
+}
+
+.audio-dump-progress span {
+    display: block;
+    width: 0;
+    height: 100%;
+    background: #2ecc71;
+    transition: width 0.2s ease;
+}
+
+#downloadAudioDumpBtn {
+    min-width: 0;
+    padding: 5px 10px;
+    border-radius: 4px;
+    background: #e9ecef;
+}
+
 button {
     padding: 8px 16px;
     border: none;
@@ -430,6 +507,13 @@ body::before {
 }
 
 @media (max-width: 768px) {
+    .audio-dump-summary,
+    .audio-dump-footer {
+        align-items: flex-start;
+        flex-direction: column;
+        gap: 8px;
+    }
+
     .video-container {
         grid-template-columns: 1fr;
     }
@@ -743,7 +827,7 @@ body::before {
 
 .svc-popup-overlay.show {
     display: block;
-} 
+}
 
 .github-link {
     position: fixed;
@@ -769,4 +853,4 @@ body::before {
     width: 24px;
     height: 24px;
     fill: #333;
-} 
+}

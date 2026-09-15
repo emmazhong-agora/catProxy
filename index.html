@@ -8,9 +8,10 @@
     <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
     <script src="https://www.gstatic.com/charts/loader.js"></script>
     <script src="https://agora-packages.s3.us-west-2.amazonaws.com/ext/vb-2-1-0/agora-extension-virtual-background.js"></script>
-    <script src="https://agora-packages.s3.us-west-2.amazonaws.com/ext/aidenoiser/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/agora-extension-ai-denoiser@2.0.2/index.js"></script>
     <script src="https://agora-packages.s3.us-west-2.amazonaws.com/ext/agora-beauty/agora-extension-beauty.js"></script>
     <script src="https://agora-packages.s3.us-west-2.amazonaws.com/ext/watermark/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
     <script type="text/javascript" src="https://unpkg.com/default-passive-events"></script>
     <style>
         .beauty-controls {
@@ -228,9 +229,27 @@
                 <button id="switchStreamBtn">Set to Low Quality</button>
                 <button id="virtualBgBtn">Toggle Virtual Background</button>
                 <button id="ainsBtn">Toggle AINS</button>
+                <button id="audioDumpBtn" disabled>Dump Audio Data</button>
                 <button id="beautyBtn">Toggle Beauty</button>
                 <button id="watermarkBtn">Enable Watermark</button>
             </div>
+
+            <section id="audioDumpPanel" class="audio-dump-panel" aria-labelledby="audioDumpTitle">
+                <div class="audio-dump-summary">
+                    <div>
+                        <h2 id="audioDumpTitle">AINS Audio Dump</h2>
+                        <p id="audioDumpMessage">Enable AINS to collect diagnostic audio.</p>
+                    </div>
+                    <span id="audioDumpStatus" class="audio-dump-status" data-state="idle">Unavailable</span>
+                </div>
+                <div class="audio-dump-progress" role="progressbar" aria-label="Audio dump progress" aria-valuemin="0" aria-valuemax="9" aria-valuenow="0">
+                    <span id="audioDumpProgress"></span>
+                </div>
+                <div class="audio-dump-footer">
+                    <span id="audioDumpFileCount">0 of up to 9 PCM files</span>
+                    <button id="downloadAudioDumpBtn" type="button" hidden>Download ZIP Again</button>
+                </div>
+            </section>
 
             <div id="beautyControls" class="beauty-controls" style="display: none;">
                 <div class="input-group">
@@ -342,4 +361,4 @@
         });
     </script>
 </body>
-</html> 
+</html>
