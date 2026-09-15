@@ -19,6 +19,7 @@ let localAudioTrack;
 let localVideoTrack;
 let remoteAudioTrack;
 let remoteVideoTrack;
+let isLocalAudioPublished = false;
 let isDualStreamEnabled = false;
 let isVirtualBackgroundEnabled = false;
 let isAinsEnabled = false;
@@ -29,6 +30,7 @@ let startTime;
 let statsInterval;
 
 const AUDIO_DUMP_EXPECTED_FILES = 9;
+const AUDIO_DUMP_CAPTURE_WARMUP_MS = 1000;
 const audioDumpState = {
     active: false,
     files: [],
@@ -36,7 +38,11 @@ const audioDumpState = {
     statusTimer: null,
     archiveBlob: null,
     archiveName: null,
-    finalizing: false
+    finalizing: false,
+    captureTrack: null,
+    captureStartedForDump: false,
+    microphoneEnabledAtStart: null,
+    microphonePublishedAtStart: null
 };
 
 //Agora net-quality stats
@@ -599,7 +605,9 @@ async function joinChannel() {
         // Join channel as host
         showPopup(`Joining channel ${channelName} as host...`);
         await client.join(appId, channelName, token, uid);
-        await client.publish([localAudioTrack, localVideoTrack]);
+        await client.publish([localVideoTrack]);
+        await localAudioTrack.setEnabled(false);
+        isLocalAudioPublished = false;
 
         // Join channel as audience
         showPopup("Joining channel as audience...");
@@ -627,9 +635,8 @@ async function joinChannel() {
             watermarkBtn.style.background = '#fff3cd';
         }
 
-        // Mute audio after joining
+        // Audio starts unpublished so a diagnostic dump can capture locally without sending it.
         if (localAudioTrack) {
-            await localAudioTrack.setEnabled(false);
             muteMicBtn.textContent = "Unmute Mic";
             showPopup("Audio muted by default");
         }
@@ -705,6 +712,7 @@ async function leaveChannel() {
         if (localAudioTrack) {
             localAudioTrack.close();
             localAudioTrack = null;
+            isLocalAudioPublished = false;
         }
         if (localVideoTrack) {
             localVideoTrack.close();
@@ -807,16 +815,28 @@ async function leaveChannel() {
 
 // Toggle microphone
 async function toggleMicrophone() {
-    if (localAudioTrack) {
-        if (localAudioTrack.enabled) {
-            await localAudioTrack.setEnabled(false);
-            muteMicBtn.textContent = "Unmute Mic";
-        } else {
-            await localAudioTrack.setEnabled(true);
-            muteMicBtn.textContent = "Mute Mic";
+    if (!localAudioTrack || audioDumpState.active || audioDumpState.finalizing) return;
+
+    if (localAudioTrack.enabled) {
+        if (isLocalAudioPublished) {
+            await client.unpublish([localAudioTrack]);
+            isLocalAudioPublished = false;
         }
-        updateAudioDumpControls();
+        await localAudioTrack.setEnabled(false);
+        muteMicBtn.textContent = "Unmute Mic";
+    } else {
+        await localAudioTrack.setEnabled(true);
+        try {
+            await client.publish([localAudioTrack]);
+            isLocalAudioPublished = true;
+            muteMicBtn.textContent = "Mute Mic";
+        } catch (error) {
+            await localAudioTrack.setEnabled(false);
+            isLocalAudioPublished = false;
+            throw error;
+        }
     }
+    updateAudioDumpControls();
 }
 
 // Toggle camera
@@ -1275,9 +1295,8 @@ function updateAudioDumpProgress() {
 function updateAudioDumpControls() {
     if (!audioDumpBtn) return;
 
-    const isMicrophoneEnabled = Boolean(localAudioTrack?.enabled);
     audioDumpBtn.disabled = !isAinsEnabled
-        || !isMicrophoneEnabled
+        || !localAudioTrack
         || audioDumpState.active
         || audioDumpState.finalizing;
     audioDumpBtn.textContent = audioDumpState.active
@@ -1292,13 +1311,28 @@ function updateAudioDumpControls() {
     ) {
         setAudioDumpStatus(
             'idle',
-            isAinsEnabled && isMicrophoneEnabled ? 'Ready' : 'Unavailable',
+            isAinsEnabled && localAudioTrack ? 'Ready' : 'Unavailable',
             !isAinsEnabled
                 ? 'Enable AINS to collect diagnostic audio.'
-                : !isMicrophoneEnabled
-                    ? 'Unmute the microphone before collecting diagnostic audio.'
-                    : 'Captures the previous 30 seconds and the next 60 seconds.'
+                : !localAudioTrack
+                    ? 'Join a channel to make a microphone available.'
+                    : localAudioTrack.enabled
+                        ? 'Captures the previous 30 seconds and the next 60 seconds.'
+                        : 'Microphone capture starts locally without publishing to the channel.'
         );
+    }
+
+    const dumpLocksAudioState = audioDumpState.active || audioDumpState.finalizing;
+    if (muteMicBtn) muteMicBtn.disabled = !localAudioTrack || dumpLocksAudioState;
+    if (ainsBtn) ainsBtn.disabled = !localAudioTrack || dumpLocksAudioState;
+}
+
+async function restoreAudioDumpCapture() {
+    const captureTrack = audioDumpState.captureTrack;
+    audioDumpState.captureTrack = null;
+    if (!captureTrack || captureTrack !== localAudioTrack) return;
+    if (captureTrack.enabled && !isLocalAudioPublished) {
+        await captureTrack.setEnabled(false);
     }
 }
 
@@ -1364,6 +1398,9 @@ function buildAudioDumpManifest() {
         microphone: micSelect.options[micSelect.selectedIndex]?.text || null,
         microphoneEnabled: Boolean(localAudioTrack?.enabled),
         microphoneMuted: localAudioTrack?.muted ?? null,
+        microphoneEnabledAtDumpStart: audioDumpState.microphoneEnabledAtStart,
+        microphonePublishedAtDumpStart: audioDumpState.microphonePublishedAtStart,
+        microphoneCaptureStartedForDump: audioDumpState.captureStartedForDump,
         agoraRtcSdkVersion: AgoraRTC.VERSION || null,
         aiDenoiserVersion: AI_DENOISER_VERSION,
         aiDenoiserMode: ainsMode,
@@ -1387,9 +1424,15 @@ async function finalizeAudioDump() {
     audioDumpState.statusTimer = null;
     updateAudioDumpControls();
 
+    try {
+        await restoreAudioDumpCapture();
+    } catch (error) {
+        console.warn('Failed to restore microphone capture after AINS dump:', error);
+    }
+
     if (!audioDumpState.files.length) {
         audioDumpState.finalizing = false;
-        setAudioDumpStatus('error', 'No data', 'AINS returned no audio files. Keep the microphone unmuted and try again.');
+        setAudioDumpStatus('error', 'No data', 'AINS returned no audio files. Keep the call running and try again.');
         updateAudioDumpControls();
         return;
     }
@@ -1433,8 +1476,8 @@ async function startAudioDump() {
         showPopup('Enable AINS before starting an audio dump');
         return;
     }
-    if (!localAudioTrack?.enabled) {
-        showPopup('Unmute the microphone before starting an audio dump');
+    if (!localAudioTrack) {
+        showPopup('Join a channel before starting an audio dump');
         updateAudioDumpControls();
         return;
     }
@@ -1445,6 +1488,10 @@ async function startAudioDump() {
     audioDumpState.startedAt = new Date();
     audioDumpState.archiveBlob = null;
     audioDumpState.archiveName = null;
+    audioDumpState.captureTrack = null;
+    audioDumpState.captureStartedForDump = false;
+    audioDumpState.microphoneEnabledAtStart = Boolean(localAudioTrack.enabled);
+    audioDumpState.microphonePublishedAtStart = isLocalAudioPublished;
     if (downloadAudioDumpBtn) downloadAudioDumpBtn.hidden = true;
     updateAudioDumpProgress();
     setAudioDumpStatus('collecting', 'Collecting', 'Keep the call running for about 60 seconds.');
@@ -1460,13 +1507,28 @@ async function startAudioDump() {
     }, 1000);
 
     try {
-        await ainsProcessor.dump();
+        const processor = ainsProcessor;
+        if (!localAudioTrack.enabled) {
+            audioDumpState.captureTrack = localAudioTrack;
+            audioDumpState.captureStartedForDump = true;
+            await localAudioTrack.setEnabled(true);
+            await new Promise(resolve => setTimeout(resolve, AUDIO_DUMP_CAPTURE_WARMUP_MS));
+        }
+        if (!isAinsEnabled || ainsProcessor !== processor) {
+            throw new Error('AINS was disabled before audio collection started');
+        }
+        await processor.dump();
         showPopup('AINS audio dump started');
     } catch (error) {
         console.error('Failed to start AINS audio dump:', error);
         audioDumpState.active = false;
         clearInterval(audioDumpState.statusTimer);
         audioDumpState.statusTimer = null;
+        try {
+            await restoreAudioDumpCapture();
+        } catch (restoreError) {
+            console.warn('Failed to restore microphone capture after dump failure:', restoreError);
+        }
         setAudioDumpStatus('error', 'Failed', error.message || 'Could not start the audio dump.');
         updateAudioDumpControls();
     }
