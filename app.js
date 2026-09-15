@@ -22,6 +22,7 @@ let remoteVideoTrack;
 let isDualStreamEnabled = false;
 let isVirtualBackgroundEnabled = false;
 let isAinsEnabled = false;
+let ainsMode = 'NSNG';
 let ainsExtension;
 let ainsProcessor;
 let startTime;
@@ -814,6 +815,7 @@ async function toggleMicrophone() {
             await localAudioTrack.setEnabled(true);
             muteMicBtn.textContent = "Mute Mic";
         }
+        updateAudioDumpControls();
     }
 }
 
@@ -1273,7 +1275,11 @@ function updateAudioDumpProgress() {
 function updateAudioDumpControls() {
     if (!audioDumpBtn) return;
 
-    audioDumpBtn.disabled = !isAinsEnabled || audioDumpState.active || audioDumpState.finalizing;
+    const isMicrophoneEnabled = Boolean(localAudioTrack?.enabled);
+    audioDumpBtn.disabled = !isAinsEnabled
+        || !isMicrophoneEnabled
+        || audioDumpState.active
+        || audioDumpState.finalizing;
     audioDumpBtn.textContent = audioDumpState.active
         ? `Collecting ${audioDumpState.files.length}/${AUDIO_DUMP_EXPECTED_FILES}`
         : audioDumpState.finalizing ? 'Creating ZIP...' : 'Dump Audio Data';
@@ -1286,10 +1292,12 @@ function updateAudioDumpControls() {
     ) {
         setAudioDumpStatus(
             'idle',
-            isAinsEnabled ? 'Ready' : 'Unavailable',
-            isAinsEnabled
-                ? 'Captures the previous 30 seconds and the next 60 seconds.'
-                : 'Enable AINS to collect diagnostic audio.'
+            isAinsEnabled && isMicrophoneEnabled ? 'Ready' : 'Unavailable',
+            !isAinsEnabled
+                ? 'Enable AINS to collect diagnostic audio.'
+                : !isMicrophoneEnabled
+                    ? 'Unmute the microphone before collecting diagnostic audio.'
+                    : 'Captures the previous 30 seconds and the next 60 seconds.'
         );
     }
 }
@@ -1354,8 +1362,11 @@ function buildAudioDumpManifest() {
         uid: client?.uid ?? null,
         audioProfile: audioProfileSelect.value,
         microphone: micSelect.options[micSelect.selectedIndex]?.text || null,
+        microphoneEnabled: Boolean(localAudioTrack?.enabled),
+        microphoneMuted: localAudioTrack?.muted ?? null,
         agoraRtcSdkVersion: AgoraRTC.VERSION || null,
         aiDenoiserVersion: AI_DENOISER_VERSION,
+        aiDenoiserMode: ainsMode,
         page: `${window.location.origin}${window.location.pathname}`,
         userAgent: navigator.userAgent,
         crossOriginIsolated: window.crossOriginIsolated,
@@ -1420,6 +1431,11 @@ async function finalizeAudioDump() {
 async function startAudioDump() {
     if (!isAinsEnabled || !ainsProcessor || typeof ainsProcessor.dump !== 'function') {
         showPopup('Enable AINS before starting an audio dump');
+        return;
+    }
+    if (!localAudioTrack?.enabled) {
+        showPopup('Unmute the microphone before starting an audio dump');
+        updateAudioDumpControls();
         return;
     }
     if (audioDumpState.active || audioDumpState.finalizing) return;
@@ -1511,22 +1527,13 @@ async function toggleAins() {
             processor.on('overload', async (elapsedTimeInMs) => {
                 const elapsedDetail = Number.isFinite(elapsedTimeInMs) ? ` after ${elapsedTimeInMs}ms` : '';
                 console.warn(`[AINS] processor overload${elapsedDetail}`);
-                showPopup(`AINS overload${elapsedDetail}`);
                 try {
-                    await processor.disable();
-                    isAinsEnabled = false;
-                    ainsBtn.textContent = "Enable AINS";
-                    updateAudioDumpControls();
-                    showPopup("AINS disabled due to overload");
+                    await processor.setMode('STATIONARY_NS');
+                    ainsMode = 'STATIONARY_NS';
+                    showPopup(`AINS overload${elapsedDetail}; switched to stationary noise suppression`);
                 } catch (error) {
-                    console.error("disable AIDenoiser failure");
-                    showPopup("Failed to disable AINS after overload");
-                } finally {
-                    try {
-                        await detachAinsProcessor();
-                    } catch (error) {
-                        console.error('Failed to remove overloaded AINS processor:', error);
-                    }
+                    console.error('Failed to switch AINS mode after overload:', error);
+                    showPopup('AINS overload; failed to switch noise suppression mode');
                 }
             });
 
@@ -1537,6 +1544,7 @@ async function toggleAins() {
             try {
                 await processor.enable();
                 await processor.setLevel("AGGRESSIVE");
+                ainsMode = 'NSNG';
                 isAinsEnabled = true;
                 ainsBtn.textContent = "Disable AINS";
                 updateAudioDumpControls();
