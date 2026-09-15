@@ -359,6 +359,15 @@ header {
     background: #e9ecef;
 }
 
+#audioDumpBtn.audio-dump-stop {
+    background: #c0392b;
+    color: #fff;
+}
+
+#audioDumpBtn.audio-dump-stop:hover:not(:disabled) {
+    background: #962d22;
+}
+
 button {
     padding: 8px 16px;
     border: none;

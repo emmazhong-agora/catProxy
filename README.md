@@ -73,8 +73,9 @@ cd catProxy
 1. Join a channel. The microphone is disabled and its audio track is not published by default.
 2. Click **Enable AINS**.
 3. If the issue occurs while speaking in the channel, click **Unmute Mic** and reproduce it before starting the dump so the archive includes pre-trigger audio.
-4. Click **Dump Audio Data** and keep the call running for about 60 seconds. If the microphone is muted, the app temporarily starts local capture without publishing the audio track to the channel.
-5. The browser downloads one `ains-audio-dump-*.zip` archive when collection finishes.
+4. Click **Dump Audio Data**. If the microphone is muted, the app temporarily starts local capture without publishing the audio track to the channel.
+5. Click **Stop Audio Dump** whenever enough audio has been collected, or let collection stop automatically after about 60 seconds.
+6. The browser downloads one `ains-audio-dump-*.zip` archive containing the PCM files collected so far.
 
 The archive contains up to nine PCM files covering three AINS processing stages (`input`, `ns_out`, and `agc_out`) plus `manifest.json` with browser, SDK, channel, microphone, and audio-profile context. According to the [Agora AINS Web documentation](https://docs.agora.io/en/realtime-media/marketplace/build/add-audio-effects/ains/web#dump-audio-data), the dump includes up to 30 seconds before the button click and 60 seconds after it. Disabling AINS or leaving early ends the dump and can produce fewer files.
 

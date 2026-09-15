@@ -41,6 +41,9 @@ const audioDumpState = {
     archiveBlob: null,
     archiveName: null,
     finalizing: false,
+    finalizePromise: null,
+    stopping: false,
+    stopRequested: false,
     captureTrack: null,
     captureStartedForDump: false,
     microphoneEnabledAtStart: null,
@@ -1298,13 +1301,15 @@ function updateAudioDumpProgress() {
 function updateAudioDumpControls() {
     if (!audioDumpBtn) return;
 
-    audioDumpBtn.disabled = !isAinsEnabled
-        || !localAudioTrack
-        || audioDumpState.active
-        || audioDumpState.finalizing;
-    audioDumpBtn.textContent = audioDumpState.active
-        ? `Collecting ${audioDumpState.files.length}/${AUDIO_DUMP_EXPECTED_FILES}`
-        : audioDumpState.finalizing ? 'Creating ZIP...' : 'Dump Audio Data';
+    audioDumpBtn.disabled = audioDumpState.active
+        ? audioDumpState.stopping || audioDumpState.finalizing
+        : !isAinsEnabled || !localAudioTrack || audioDumpState.finalizing;
+    audioDumpBtn.textContent = audioDumpState.stopping
+        ? 'Stopping Audio Dump...'
+        : audioDumpState.active
+            ? 'Stop Audio Dump'
+            : audioDumpState.finalizing ? 'Creating ZIP...' : 'Dump Audio Data';
+    audioDumpBtn.classList.toggle('audio-dump-stop', audioDumpState.active && !audioDumpState.stopping);
 
     if (
         !audioDumpState.active
@@ -1325,9 +1330,9 @@ function updateAudioDumpControls() {
         );
     }
 
-    const dumpLocksAudioState = audioDumpState.active || audioDumpState.finalizing;
+    const dumpLocksAudioState = audioDumpState.active || audioDumpState.finalizing || audioDumpState.stopping;
     if (muteMicBtn) muteMicBtn.disabled = !localAudioTrack || dumpLocksAudioState;
-    if (ainsBtn) ainsBtn.disabled = !localAudioTrack || dumpLocksAudioState;
+    if (ainsBtn) ainsBtn.disabled = !localAudioTrack || audioDumpState.finalizing || audioDumpState.stopping;
 }
 
 async function restoreAudioDumpCapture() {
@@ -1381,7 +1386,7 @@ async function detachAinsProcessor() {
 
     if (ainsProcessor === processor) ainsProcessor = null;
     try {
-        if (audioDumpState.active) await finalizeAudioDump();
+        if (audioDumpState.active || audioDumpState.finalizePromise) await finalizeAudioDump();
     } finally {
         setAinsLogLevel('NONE');
     }
@@ -1427,6 +1432,7 @@ function buildAudioDumpManifest() {
         aiDenoiserVersion: AI_DENOISER_VERSION,
         aiDenoiserMode: ainsMode,
         aiDenoiserLevel: ainsLevel,
+        dumpStoppedByUser: audioDumpState.stopRequested,
         page: `${window.location.origin}${window.location.pathname}`,
         userAgent: navigator.userAgent,
         crossOriginIsolated: window.crossOriginIsolated,
@@ -1439,8 +1445,21 @@ function buildAudioDumpManifest() {
 }
 
 async function finalizeAudioDump() {
-    if (!audioDumpState.active || audioDumpState.finalizing) return;
+    if (audioDumpState.finalizePromise) return audioDumpState.finalizePromise;
+    if (!audioDumpState.active) return;
 
+    const finalizePromise = finalizeAudioDumpFiles();
+    audioDumpState.finalizePromise = finalizePromise;
+    try {
+        await finalizePromise;
+    } finally {
+        if (audioDumpState.finalizePromise === finalizePromise) {
+            audioDumpState.finalizePromise = null;
+        }
+    }
+}
+
+async function finalizeAudioDumpFiles() {
     audioDumpState.active = false;
     audioDumpState.finalizing = true;
     clearInterval(audioDumpState.statusTimer);
@@ -1494,6 +1513,53 @@ async function finalizeAudioDump() {
     updateAudioDumpControls();
 }
 
+async function stopAudioDump() {
+    if (!audioDumpState.active || audioDumpState.stopping || audioDumpState.finalizing) return;
+
+    const processor = ainsProcessor;
+    audioDumpState.stopping = true;
+    audioDumpState.stopRequested = true;
+    setAudioDumpStatus('collecting', 'Stopping', 'Finalizing the audio collected so far...');
+    updateAudioDumpControls();
+
+    try {
+        if (!processor) throw new Error('AINS processor is unavailable');
+        await processor.disable();
+        await finalizeAudioDump();
+
+        if (isAinsEnabled && ainsProcessor === processor) {
+            await processor.enable();
+            await processor.setLevel(ainsLevel);
+            if (ainsMode === 'STATIONARY_NS') await processor.setMode(ainsMode);
+            console.info('[AINS] processor resumed after stopping audio dump', {
+                level: ainsLevel,
+                mode: ainsMode
+            });
+        }
+        showPopup('AINS audio dump stopped');
+    } catch (error) {
+        console.error('Failed to stop AINS audio dump:', error);
+        if (audioDumpState.active || audioDumpState.finalizePromise) {
+            await finalizeAudioDump();
+        }
+        if (!audioDumpState.archiveBlob) {
+            setAudioDumpStatus('error', 'Stop failed', error.message || 'Could not stop the audio dump.');
+        }
+        showPopup('Failed to stop AINS audio dump cleanly');
+    } finally {
+        audioDumpState.stopping = false;
+        updateAudioDumpControls();
+    }
+}
+
+async function toggleAudioDump() {
+    if (audioDumpState.active) {
+        await stopAudioDump();
+    } else {
+        await startAudioDump();
+    }
+}
+
 async function startAudioDump() {
     if (!isAinsEnabled || !ainsProcessor || typeof ainsProcessor.dump !== 'function') {
         showPopup('Enable AINS before starting an audio dump');
@@ -1511,13 +1577,14 @@ async function startAudioDump() {
     audioDumpState.startedAt = new Date();
     audioDumpState.archiveBlob = null;
     audioDumpState.archiveName = null;
+    audioDumpState.stopRequested = false;
     audioDumpState.captureTrack = null;
     audioDumpState.captureStartedForDump = false;
     audioDumpState.microphoneEnabledAtStart = Boolean(localAudioTrack.enabled);
     audioDumpState.microphonePublishedAtStart = isLocalAudioPublished;
     if (downloadAudioDumpBtn) downloadAudioDumpBtn.hidden = true;
     updateAudioDumpProgress();
-    setAudioDumpStatus('collecting', 'Collecting', 'Keep the call running for about 60 seconds.');
+    setAudioDumpStatus('collecting', 'Collecting', 'Collecting until stopped or for up to 60 seconds.');
     updateAudioDumpControls();
 
     audioDumpState.statusTimer = setInterval(() => {
@@ -1537,6 +1604,7 @@ async function startAudioDump() {
             await localAudioTrack.setEnabled(true);
             await new Promise(resolve => setTimeout(resolve, AUDIO_DUMP_CAPTURE_WARMUP_MS));
         }
+        if (audioDumpState.stopRequested) return;
         if (!isAinsEnabled || ainsProcessor !== processor) {
             throw new Error('AINS was disabled before audio collection started');
         }
@@ -1937,7 +2005,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (switchStreamBtn) switchStreamBtn.addEventListener('click', switchStream);
     if (virtualBgBtn) virtualBgBtn.addEventListener('click', toggleVirtualBackground);
     if (ainsBtn) ainsBtn.addEventListener('click', toggleAins);
-    if (audioDumpBtn) audioDumpBtn.addEventListener('click', startAudioDump);
+    if (audioDumpBtn) audioDumpBtn.addEventListener('click', toggleAudioDump);
     if (ainsLevelSelect) ainsLevelSelect.addEventListener('change', changeAinsLevel);
     if (downloadAudioDumpBtn) {
         downloadAudioDumpBtn.addEventListener('click', () => {
