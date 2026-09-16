@@ -161,6 +161,7 @@ let fpsData;
 
 // Add new DOM elements
 const audioProfileSelect = document.getElementById('audioProfile');
+const ainsModeSelect = document.getElementById('ainsMode');
 const ainsLevelSelect = document.getElementById('ainsLevel');
 const svcControls = document.getElementById('svcControls');
 const spatialLayerInput = document.getElementById('spatialLayer');
@@ -1529,8 +1530,8 @@ async function stopAudioDump() {
 
         if (isAinsEnabled && ainsProcessor === processor) {
             await processor.enable();
+            await processor.setMode(ainsMode);
             await processor.setLevel(ainsLevel);
-            if (ainsMode === 'STATIONARY_NS') await processor.setMode(ainsMode);
             console.info('[AINS] processor resumed after stopping audio dump', {
                 level: ainsLevel,
                 mode: ainsMode
@@ -1648,6 +1649,32 @@ function getAinsExtension() {
     return ainsExtension;
 }
 
+async function changeAinsMode() {
+    const selectedMode = ainsModeSelect?.value;
+    if (selectedMode !== 'NSNG' && selectedMode !== 'STATIONARY_NS') return;
+
+    if (!isAinsEnabled || !ainsProcessor) {
+        ainsMode = selectedMode;
+        console.info(`[AINS] processor mode selected: ${ainsMode}`);
+        return;
+    }
+
+    const previousMode = ainsMode;
+    ainsModeSelect.disabled = true;
+    try {
+        await ainsProcessor.setMode(selectedMode);
+        ainsMode = selectedMode;
+        console.info(`[AINS] processor mode: ${ainsMode}`);
+        showPopup(`AINS mode changed to ${ainsMode}`);
+    } catch (error) {
+        ainsModeSelect.value = previousMode;
+        console.error('Failed to change AINS mode:', error);
+        showPopup('Failed to change AINS mode');
+    } finally {
+        ainsModeSelect.disabled = false;
+    }
+}
+
 async function changeAinsLevel() {
     const selectedLevel = ainsLevelSelect?.value;
     if (selectedLevel !== 'SOFT' && selectedLevel !== 'AGGRESSIVE') return;
@@ -1710,6 +1737,7 @@ async function toggleAins() {
                 try {
                     await processor.setMode('STATIONARY_NS');
                     ainsMode = 'STATIONARY_NS';
+                    if (ainsModeSelect) ainsModeSelect.value = ainsMode;
                     showPopup(`AINS overload${elapsedDetail}; switched to stationary noise suppression`);
                 } catch (error) {
                     console.error('Failed to switch AINS mode after overload:', error);
@@ -1722,14 +1750,20 @@ async function toggleAins() {
             
             // Enable and configure
             try {
+                const selectedMode = ainsModeSelect?.value || 'NSNG';
+                const selectedLevel = ainsLevelSelect?.value || 'AGGRESSIVE';
                 await processor.enable();
-                await processor.setLevel(ainsLevelSelect.value);
-                ainsLevel = ainsLevelSelect.value;
-                ainsMode = 'NSNG';
+                await processor.setMode(selectedMode);
+                await processor.setLevel(selectedLevel);
+                ainsMode = selectedMode;
+                ainsLevel = selectedLevel;
                 isAinsEnabled = true;
                 ainsBtn.textContent = "Disable AINS";
                 updateAudioDumpControls();
-                console.info(`[AINS] processor level: ${ainsLevel}`);
+                console.info('[AINS] processor configured', {
+                    mode: ainsMode,
+                    level: ainsLevel
+                });
                 showPopup("AINS enabled successfully");
             } catch (error) {
                 console.error("enable AIDenoiser failure");
@@ -2006,6 +2040,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (virtualBgBtn) virtualBgBtn.addEventListener('click', toggleVirtualBackground);
     if (ainsBtn) ainsBtn.addEventListener('click', toggleAins);
     if (audioDumpBtn) audioDumpBtn.addEventListener('click', toggleAudioDump);
+    if (ainsModeSelect) ainsModeSelect.addEventListener('change', changeAinsMode);
     if (ainsLevelSelect) ainsLevelSelect.addEventListener('change', changeAinsLevel);
     if (downloadAudioDumpBtn) {
         downloadAudioDumpBtn.addEventListener('click', () => {

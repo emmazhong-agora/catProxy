@@ -58,7 +58,7 @@ cd catProxy
 4. **Additional Features**
    - Toggle microphone/camera
    - Enable/disable virtual background
-   - Select `SOFT` or `AGGRESSIVE` AINS level and toggle AI noise suppression
+   - Select the AINS mode and `SOFT` or `AGGRESSIVE` level, then toggle AI noise suppression
    - Collect an AINS audio dump
    - Enable/disable dual stream
    - Switch between streams
@@ -81,7 +81,7 @@ The archive contains up to nine PCM files covering three AINS processing stages 
 
 Share the complete ZIP when escalating an AINS issue. PCM files are raw audio and may contain customer conversations, so obtain consent and handle them as sensitive data.
 
-The AINS extension automatically switches to `DEBUG` logging when AINS is enabled and to `NONE` when AINS is disabled. Changing **AINS Level** while AINS is running applies the new level immediately.
+The AINS extension automatically switches to `DEBUG` logging when AINS is enabled and to `NONE` when AINS is disabled. Changing **AINS Mode** or **AINS Level** while AINS is running applies the new setting immediately without rejoining the channel. `NSNG` is the default hybrid mode; `STATIONARY_NS` only suppresses stationary noise and is intended primarily as an overload fallback.
 
 ## Deploy with GitHub Pages
 
