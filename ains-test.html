@@ -1,0 +1,59 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta name="description" content="Client-friendly Agora AINS audio troubleshooting test">
+    <title>AINS Field Test</title>
+    <link rel="stylesheet" href="ains-test.css?v=monitor-controls-3">
+    <script src="ains-console.js"></script>
+    <script src="https://download.agora.io/sdk/release/AgoraRTC_N.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/agora-extension-ai-denoiser@2.0.2/index.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
+</head>
+<body>
+    <div class="test-app">
+        <header class="test-header">
+            <a class="brand" href="index.html" aria-label="Back to Cat Proxy"><span class="brand-mark">AINS</span><span class="brand-name">Field Test</span></a>
+            <div class="header-meta"><span class="live-dot" aria-hidden="true"></span><span id="connectionLabel">Link ready</span></div>
+        </header>
+        <main>
+            <section class="intro-band">
+                <p class="eyebrow">AGORA AUDIO DIAGNOSTICS</p>
+                <h1>AINS <em>Field Test</em></h1>
+                <p class="intro-copy">Wear headphones to avoid feedback. Speak and listen to your microphone during each step. Audio is saved automatically.</p>
+            </section>
+            <section class="access-strip" aria-label="Test connection details">
+                <div><span class="strip-label">APP ID</span><strong id="appIdValue">Missing</strong></div>
+                <div><span class="strip-label">TOKEN</span><strong id="tokenValue">Not provided</strong></div>
+                <div><span class="strip-label">UID</span><strong id="uidValue">0</strong></div>
+                <div><span class="strip-label">CHANNEL</span><strong id="channelValue">Missing</strong></div>
+            </section>
+            <section id="configurationError" class="notice notice-error" hidden><strong>This test link is missing an App ID.</strong><span>Ask the support team for a complete link containing <code>appId</code>.</span></section>
+            <section class="test-layout">
+                <aside class="step-rail" aria-label="Test steps"><div class="rail-heading"><span class="eyebrow">THE RUN</span><span id="stepCount">0 / 5</span></div><ol id="stepList" class="step-list"></ol></aside>
+                <section class="run-panel" aria-live="polite">
+                    <div class="run-panel-topline"><span id="stepKicker" class="eyebrow">READY TO START</span><span id="timerLabel" class="timer-label">--:--</span></div>
+                    <h2 id="stepTitle">AINS testing is ready</h2>
+                    <p id="stepPurpose" class="step-purpose">Your link has the connection details. Start the run once, then follow the short prompts while the page handles the SDK settings and audio dumps.</p>
+                    <div id="parameterRow" class="parameter-row" hidden></div>
+                    <div class="monitor-row" aria-label="Local audio playback">
+                        <label class="monitor-toggle"><input id="monitorEnabled" type="checkbox" checked> Hear my microphone</label>
+                        <label class="monitor-volume">Playback volume <input id="monitorVolume" type="range" min="0" max="100" value="100"><output id="monitorVolumeValue">100%</output></label>
+                        <button id="monitorRetry" class="secondary-action" type="button" disabled>Play microphone audio</button>
+                        <span id="monitorStatus">Available during each recording step</span>
+                    </div>
+                    <div id="issuePrompt" class="issue-prompt" hidden><span class="issue-label">Did you hear crackling in this step? <strong>Required</strong></span><div class="issue-actions" role="group" aria-label="Required crackling result"><button type="button" data-issue="yes">Yes</button><button type="button" data-issue="no">No</button><button type="button" data-issue="unknown">Not sure</button></div></div>
+                    <div class="instruction-block"><span class="instruction-label">WHAT TO DO</span><p id="stepInstruction">Click the button below. Speak naturally when the step asks you to reproduce the issue.</p></div>
+                    <div class="meter-block"><div class="meter-heading"><span id="activityLabel">No test running</span><span id="fileCountLabel">0 PCM files</span></div><div class="meter-track"><span id="activityMeter"></span></div></div>
+                    <div class="run-actions"><button id="startButton" class="primary-action" type="button">Start AINS Testing</button><button id="finishStepButton" class="secondary-action" type="button" hidden>Finish This Step</button></div>
+                </section>
+            </section>
+            <section class="results-band" aria-labelledby="resultsTitle"><div class="results-heading"><div><p class="eyebrow">COLLECTED EVIDENCE</p><h2 id="resultsTitle">Test results</h2></div><button id="downloadButton" class="secondary-action" type="button" hidden>Download ZIP</button></div><div id="resultsTable" class="results-table" role="table" aria-label="Test results"><div class="results-empty">Your results will appear here after the run starts.</div></div></section>
+            <section class="privacy-note"><span class="privacy-icon" aria-hidden="true">!</span><p>The ZIP contains raw audio and browser diagnostics. Only share it with the support team through an approved channel.</p></section>
+        </main>
+        <footer class="test-footer"><span>agora-extension-ai-denoiser 2.0.2</span><a href="https://github.com/emmazhong-agora/catProxy" target="_blank" rel="noopener noreferrer">Source</a></footer>
+    </div>
+    <script src="ains-test.js?v=monitor-controls-3"></script>
+</body>
+</html>

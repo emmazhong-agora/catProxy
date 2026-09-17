@@ -95,7 +95,21 @@ This repository is a static site and does not require a build step. Its relative
 
 For this repository, pushing a new commit to `main` updates `https://frank005.github.io/catProxy/` because GitHub Pages is already enabled.
 
+## Share the client-friendly AINS test
+
+Use `ains-test.html` when a customer needs a guided reproduction flow without manually entering SDK settings. The page reads the required App ID and `channelname`, optional token, and optional numeric UID from the URL; UID defaults to `0`.
+
+```text
+https://<username>.github.io/<repository>/ains-test.html?appId=YOUR_APP_ID&channelname=YOUR_CHANNEL&token=OPTIONAL_TOKEN&uid=0
+```
+
+The `channelname` parameter is mandatory, including when there is no token. URL-encode token and channel values when constructing the link; the token remains visible in browser history and to anyone with the link, but is redacted from the ZIP's Console log. Use a short-lived test token and share the link securely. The token's UID must match the link's UID.
+
+After the customer clicks **Start AINS Testing**, the page runs a 30-second no-AINS baseline followed by up to 60 seconds each for `NSNG/SOFT`, `NSNG/AGGRESSIVE`, `STATIONARY_NS/SOFT`, and `STATIONARY_NS/AGGRESSIVE`. Customers may finish a step early or stop the entire run. Each step waits for an explicit Yes, No, or Not sure crackling response before advancing. The ZIP contains a separate folder and manifest for every step, including raw microphone PCM for the baseline and AINS PCM for the other steps, plus timestamped `console.log.txt` with test settings and browser/SDK diagnostics.
+
 ## Technical Details
+
+The client test plays the local microphone while each step collects audio: raw microphone in the baseline, and the AINS-processed track in the four AINS steps. Playback stops when collection ends or the run stops. Customers should wear headphones to avoid acoustic feedback.
 
 ### Video Profiles
 - 360p (640x360)

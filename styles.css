@@ -47,6 +47,21 @@ header {
     box-shadow: 0 2px 4px rgba(0,0,0,0.1);
 }
 
+.client-test-link {
+    padding: 8px 12px;
+    border: 1px solid #4b2e83;
+    border-radius: 4px;
+    color: #4b2e83;
+    font-size: 13px;
+    font-weight: 600;
+    text-decoration: none;
+}
+
+.client-test-link:hover {
+    background: #4b2e83;
+    color: #fff;
+}
+
 .logo {
     display: flex;
     align-items: center;
